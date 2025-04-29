@@ -4,7 +4,13 @@ import pickle
 from PIL import Image
 import numpy as np
 
-# Load model and tokenizer safely
+# Load InceptionV3 feature extractor
+@st.cache_resource
+def load_feature_extractor():
+    base_model = tf.keras.applications.InceptionV3(include_top=False, pooling='avg')
+    return tf.keras.Model(inputs=base_model.input, outputs=base_model.output)
+
+# Load model and tokenizer
 @st.cache_resource
 def load_model():
     return tf.keras.models.load_model("model.h5", compile=False)
@@ -16,30 +22,33 @@ def load_tokenizer():
 
 model = load_model()
 tokenizer = load_tokenizer()
+feature_extractor = load_feature_extractor()
 
-# Utility: preprocess image
-def preprocess_image(img):
+# Preprocess uploaded image and extract features
+def preprocess_and_extract(img):
     img = img.resize((299, 299))
     img_array = tf.keras.preprocessing.image.img_to_array(img)
     img_array = tf.keras.applications.inception_v3.preprocess_input(img_array)
-    return np.expand_dims(img_array, axis=0)
+    img_array = np.expand_dims(img_array, axis=0)
+    return feature_extractor.predict(img_array)
 
-# Utility: generate caption (basic loop example)
-def generate_caption(image):
+# Generate caption
+def generate_caption(image_features):
     start_token = 'startseq'
     end_token = 'endseq'
-    max_length = 34  # Adjust based on your model
+    max_length = 34
 
     input_text = start_token
     for _ in range(max_length):
         sequence = tokenizer.texts_to_sequences([input_text])[0]
         sequence = tf.keras.preprocessing.sequence.pad_sequences([sequence], maxlen=max_length)
-        yhat = model.predict([image, sequence], verbose=0)
+        yhat = model.predict([image_features, sequence], verbose=0)
         word_index = np.argmax(yhat)
-        word = tokenizer.index_word.get(word_index, None)
+        word = tokenizer.index_word.get(word_index)
         if word is None or word == end_token:
             break
         input_text += ' ' + word
+
     return input_text.replace(start_token, '').strip()
 
 # Streamlit UI
@@ -52,7 +61,7 @@ if uploaded_file:
 
     if st.button("Generate Caption"):
         with st.spinner("Generating..."):
-            preprocessed = preprocess_image(image)
-            caption = generate_caption(preprocessed)
+            features = preprocess_and_extract(image)
+            caption = generate_caption(features)
             st.success("Caption:")
             st.write(caption)
